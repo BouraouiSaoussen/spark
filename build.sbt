@@ -16,7 +16,6 @@ lazy val root = (project in file("."))
     libraryDependencies += "org.apache.kafka" % "kafka-streams-examples" % "2.8.0",
     libraryDependencies += "org.json4s" %% "json4s-jackson" % "3.6.11",
     libraryDependencies += "org.apache.logging.log4j" % "log4j-api" % "2.14.1",
-    libraryDependencies += "org.apache.logging.log4j" % "log4j-core" % "2.14.1",
-    libraryDependencies += "edu.stanford.nlp" % "stanford-corenlp" % "4.2.2"   
+    libraryDependencies += "org.apache.logging.log4j" % "log4j-core" % "2.14.1"
   )
 // See https://www.scala-sbt.org/1.x/docs/Using-Sonatype.html for instructions on how to publish to Sonatype.
