@@ -1,81 +1,88 @@
-import org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer}
+import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.StringDeserializer
-import java.util.Properties
-import scala.collection.JavaConverters._
+import org.apache.spark.SparkConf
+import org.apache.spark.streaming.{Seconds, StreamingContext}
+import org.apache.spark.streaming.kafka010.{ConsumerStrategies, KafkaUtils, LocationStrategies}
+import org.apache.log4j.{Level, Logger}
 
-import scala.collection.mutable.Map
-
-object Consumer {
+object SparkKafkaConsumer {
   def main(args: Array[String]): Unit = {
     val kafkaServer = "localhost:9092"
-    val topic = "logs" // Same topic as used by the producer
+    val topic = "logs"
+    val groupId = "log-analyzer-group"
 
-    // Kafka consumer configuration
-    val props = new Properties()
-    props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServer)
-    props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
-    props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[StringDeserializer].getName)
-    props.put(ConsumerConfig.GROUP_ID_CONFIG, "log-analyzer-group")
-    props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest") // Start from the beginning of the topic
+    val sparkConf = new SparkConf().setAppName("SparkKafkaConsumer").setMaster("local[*]")
+    val ssc = new StreamingContext(sparkConf, Seconds(10))
 
-    // Set log level to "warn"
-    import org.apache.log4j.{Level, Logger}
+    // Set log level to warn to reduce verbosity
     Logger.getRootLogger.setLevel(Level.WARN)
 
-    val consumer = new KafkaConsumer[String, String](props)
+    val kafkaParams = Map[String, Object](
+      ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG -> kafkaServer,
+      ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG -> classOf[StringDeserializer],
+      ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG -> classOf[StringDeserializer],
+      ConsumerConfig.GROUP_ID_CONFIG -> groupId,
+      ConsumerConfig.AUTO_OFFSET_RESET_CONFIG -> "earliest",
+      ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG -> (false: java.lang.Boolean)
+    )
 
-    // Subscribe to the topic
-    consumer.subscribe(List(topic).asJava)
+    val topics = Array(topic)
+    val stream = KafkaUtils.createDirectStream[String, String](
+      ssc,
+      LocationStrategies.PreferConsistent,
+      ConsumerStrategies.Subscribe[String, String](topics, kafkaParams)
+    )
 
-    // Mutable maps to store error, warning, and log counts
-    val errorCountMap = Map[String, Int]().withDefaultValue(0)
-    val warnCountMap = Map[String, Int]().withDefaultValue(0)
-    val logCountMap = Map[String, Int]().withDefaultValue(0)
+    // Accumulateurs pour stocker les erreurs, avertissements et logs
+    val errorCountAccumulator = ssc.sparkContext.longAccumulator("ErrorCount")
+    val warnCountAccumulator = ssc.sparkContext.longAccumulator("WarnCount")
+    val logCountAccumulator = ssc.sparkContext.longAccumulator("LogCount")
 
-    // Message consumption loop
-    while (true) {
-      val records = consumer.poll(java.time.Duration.ofMillis(100))
-      for (record <- records.asScala) {
+    stream.foreachRDD { rdd =>
+      rdd.foreach { record =>
         val logLine = record.value()
-        val logState = analyzeLog(logLine, errorCountMap, warnCountMap, logCountMap)
+        println(s"Received log: $logLine") // Debug: print each received log
+
+        val logState = analyzeLog(logLine, errorCountAccumulator, warnCountAccumulator, logCountAccumulator)
         if (logState.nonEmpty) {
           println(s"$logState\nLog: $logLine")
-          if (logState.contains("ERROR DETECTED")) {
-            printErrorCountTable(errorCountMap, warnCountMap, logCountMap)
-          }
         }
       }
+      // Debug: Print counts after each batch
+      println("Current counts:")
+      printErrorCountTable(errorCountAccumulator, warnCountAccumulator, logCountAccumulator)
     }
+
+    ssc.start()
+    ssc.awaitTermination()
   }
 
-  // Log analysis function
-  def analyzeLog(input: String, errorCountMap: scala.collection.mutable.Map[String, Int], 
-                 warnCountMap: scala.collection.mutable.Map[String, Int], 
-                 logCountMap: scala.collection.mutable.Map[String, Int]): String = {
-    // Check if the log contains the "error" pattern
-    logCountMap("log") += 1 // Increment the log count
+  def analyzeLog(input: String, errorCountAccumulator: org.apache.spark.util.LongAccumulator,
+                 warnCountAccumulator: org.apache.spark.util.LongAccumulator,
+                 logCountAccumulator: org.apache.spark.util.LongAccumulator): String = {
+    // Check if the log contains the "error" or "warn" pattern
+    logCountAccumulator.add(1) // Increment the log count
 
     if (input.toLowerCase.contains("error")) {
-      errorCountMap("error") += 1 // Increment the error count
+      errorCountAccumulator.add(1) // Increment the error count
       "\u001b[31mERROR DETECTED\u001b[0m" // ANSI escape code for red color
     } else if (input.toLowerCase.contains("warn")) {
-      warnCountMap("warn") += 1 // Increment the warning count
+      warnCountAccumulator.add(1) // Increment the warning count
       ""
     } else {
       ""
     }
   }
 
-  // Function to print error, warning, and log count table
-  def printErrorCountTable(errorCountMap: scala.collection.mutable.Map[String, Int], 
-                            warnCountMap: scala.collection.mutable.Map[String, Int], 
-                            logCountMap: scala.collection.mutable.Map[String, Int]): Unit = {
+  def printErrorCountTable(errorCountAccumulator: org.apache.spark.util.LongAccumulator,
+                           warnCountAccumulator: org.apache.spark.util.LongAccumulator,
+                           logCountAccumulator: org.apache.spark.util.LongAccumulator): Unit = {
     println("Error, Warning, and Log Count:")
-    println("+--------------+-----------+------------------+")
-    println("|   Log Type   | Errors    | Warnings | Logs  |")
-    println("+--------------+-----------+------------------+")
-    println(s"|   Count      |   ${errorCountMap("error")}${" " * (8 - errorCountMap("error").toString.length)}|   ${warnCountMap("warn")}${" " * (7 - warnCountMap("warn").toString.length)}|   ${logCountMap("log")}${" " * (4 - logCountMap("log").toString.length)}|")
-    println("+--------------+-----------+------------------+")
+    println("+--------------+-----------+-----------+")
+    println("|   Log Type   |  Errors   | Warnings  | Logs  |")
+    println("+--------------+-----------+-----------+")
+    println(f"|   Count      |   ${errorCountAccumulator.value}%-9d|   ${warnCountAccumulator.value}%-9d|   ${logCountAccumulator.value}%-9d|")
+    println("+--------------+-----------+-----------+")
     println()
   }
 }

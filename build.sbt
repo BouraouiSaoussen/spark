@@ -19,3 +19,9 @@ lazy val root = (project in file("."))
     libraryDependencies += "org.apache.logging.log4j" % "log4j-core" % "2.14.1"
   )
 // See https://www.scala-sbt.org/1.x/docs/Using-Sonatype.html for instructions on how to publish to Sonatype.
+libraryDependencies ++= Seq(
+  "org.apache.spark" %% "spark-core" % "3.3.0",
+  "org.apache.spark" %% "spark-sql" % "3.3.0",
+  "org.apache.spark" %% "spark-streaming" % "3.3.0",
+  "org.apache.spark" %% "spark-streaming-kafka-0-10" % "3.3.0"
+)

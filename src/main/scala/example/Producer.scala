@@ -1,7 +1,6 @@
 import java.io.File
 import scala.io.Source
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
-import org.apache.kafka.common.errors.WakeupException
 
 object Producer {
   def main(args: Array[String]): Unit = {
@@ -19,10 +18,10 @@ object Producer {
 
     val file = new File(filePath)
 
-    // Fonction pour envoyer les tweets à Kafka
-    def sendLogToKafka(tweet: String): Unit = {
+    // Fonction pour envoyer les logs à Kafka
+    def sendLogToKafka(log: String): Unit = {
       try {
-        val record = new ProducerRecord[String, String](topic, null, tweet)
+        val record = new ProducerRecord[String, String](topic, null, log)
         producer.send(record)
       } catch {
         case e: Exception =>
@@ -30,15 +29,14 @@ object Producer {
       }
     }
 
-    // Fonction pour surveiller les nouveaux tweets dans le fichier
-    def monitorFileForTweets(file: File): Unit = {
+    // Fonction pour surveiller les nouveaux logs dans le fichier
+    def monitorFileForLogs(file: File): Unit = {
       var lastReadPosition = 0L // Mémoriser la dernière position lue dans le fichier
-      var continueProcessing = true
       
-      while (continueProcessing) {
+      while (true) {
         val bufferedSource = Source.fromFile(file)
         bufferedSource.getLines().drop(lastReadPosition.toInt).foreach { line =>
-          sendLogToKafka(line.split(",")(0))
+          sendLogToKafka(line)
           lastReadPosition += 1 // Mettre à jour la dernière position lue
         }
         bufferedSource.close()
@@ -54,6 +52,6 @@ object Producer {
     }))
 
     // Démarrer la surveillance du fichier
-    monitorFileForTweets(file)
+    monitorFileForLogs(file)
   }
 }
